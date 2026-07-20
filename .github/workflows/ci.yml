@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskflow
+          POSTGRES_PASSWORD: taskflow
+          POSTGRES_DB: taskflow_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U taskflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://taskflow:taskflow@localhost:5432/taskflow_test
+      REDIS_URL: redis://localhost:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+      JWT_SECRET: ci-test-secret
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Run migrations against test Postgres
+        run: alembic upgrade head
+
+      - name: Start Redpanda (Kafka-compatible broker) for integration test
+        run: |
+          docker run -d --name redpanda -p 9092:9092 \
+            docker.redpanda.com/redpandadata/redpanda:v24.2.7 \
+            redpanda start --smp 1 --memory 512M --reserve-memory 0M \
+            --overprovisioned --node-id 0 --check=false \
+            --kafka-addr PLAINTEXT://0.0.0.0:9092 \
+            --advertise-kafka-addr PLAINTEXT://localhost:9092
+          echo "Waiting for Redpanda to become healthy..."
+          for i in $(seq 1 20); do
+            docker exec redpanda rpk cluster health 2>/dev/null | grep -q "Healthy:.*true" && break
+            sleep 2
+          done
+
+      - name: Run unit + Kafka tests
+        run: pytest tests/ -v --tb=short
+        env:
+          TASKFLOW_KAFKA_INTEGRATION: "1"
+
+      - name: Build Docker image (sanity check)
+        run: docker build -t taskflow:ci .
