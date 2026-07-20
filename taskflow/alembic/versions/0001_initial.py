@@ -25,8 +25,6 @@ def upgrade():
         sa.Column("created_at", sa.DateTime, server_default=sa.func.now()),
     )
 
-    task_status.create(op.get_bind(), checkfirst=True)
-
     op.create_table(
         "tasks",
         sa.Column("id", sa.Integer, primary_key=True, index=True),
