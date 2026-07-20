@@ -1,0 +1,31 @@
+# Used on the production VM only, layered on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The only difference from local dev: instead of building the image on the
+# server (slow, and duplicates what CI already did), we pull the exact image
+# CI just built and pushed to GHCR. This is what makes deploys fast and
+# reproducible - the artifact that passed CI is the exact artifact running
+# in production, byte for byte.
+#
+# Set GHCR_IMAGE in the server's .env, e.g.:
+#   GHCR_IMAGE=ghcr.io/your-github-username/taskflow:latest
+
+services:
+  api:
+    image: ${GHCR_IMAGE}
+    ports:
+      - "8000:8000"
+    restart: always
+
+  consumer:
+    image: ${GHCR_IMAGE}
+    restart: always
+
+  db:
+    restart: always
+
+  redis:
+    restart: always
+
+  redpanda:
+    restart: always
